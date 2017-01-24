@@ -8,16 +8,20 @@
 #include <thread>
 #include <cstdlib>
 
-std::string endpoint("http://api.stormancer.com/");
+std::string endpoint("https://api.stormancer.com/");
 std::string accountId("ranjak");
 std::string appName("tutorial-helloworld");
+
+std::mutex m;
+std::condition_variable barrier;
+bool greetingReceived = false;
 
 int main()
 {
   auto configHandle = Stormancer::Configuration::create(endpoint, accountId, appName);
   Stormancer::Client* client = Stormancer::Client::createClient(configHandle);
 
-  auto connection = client->getPublicScene("hello").then([](Stormancer::Result<Stormancer::Scene*>* sceneResult)
+  auto connection = client->getPublicScene("myscene").then([](Stormancer::Result<Stormancer::Scene*>* sceneResult)
   {
     if (!sceneResult->success()) {
       throw std::exception(sceneResult->reason());
@@ -27,6 +31,12 @@ int main()
     auto routeAdded = scene->addRoute("msg", [] (Stormancer::Packetisp_ptr packet)
     {
       std::cout << packet->readObject<std::string>() << std::endl;
+      // Notify the main thread that the greeting message was received
+      {
+        std::lock_guard<std::mutex> lock(m);
+        greetingReceived = true;
+      }
+      barrier.notify_one();
     });
 
     if (!routeAdded->success()) {
@@ -42,7 +52,9 @@ int main()
     }
     else {
       std::cout << "Connection successful." << std::endl;
-      std::this_thread::sleep_for(std::chrono::seconds(5));
+      // Wait for greeting message
+      std::unique_lock<std::mutex> lock(m);
+      barrier.wait(lock, []() { return greetingReceived; });
     }
   }
   catch (std::exception& e) {
